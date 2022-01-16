@@ -21,7 +21,7 @@ def remove_small_holes(img_mask : torch.Tensor, closing_rad : int, holes_thresho
 
     newmask = np.stack([bg, forests, houses], axis = 0)
 
-    return torch.tensor(newmask, dtype=torch.uint8)
+    return torch.tensor(newmask, dtype=torch.bool)
 
     
 

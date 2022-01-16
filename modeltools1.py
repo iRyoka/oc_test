@@ -15,6 +15,7 @@ import torch.nn.functional as NNF
 import torchvision, torchvision.utils, torchvision.transforms
 import sklearn, sklearn.metrics
 import matplotlib.pyplot as plt
+import filters1
 
 DEFAULT_OVERLAY_COLORS = ["gray", "green","orange"]
 
@@ -123,15 +124,22 @@ def F1_score(prediction, label, class_weights = []):
     return total_score / sum(class_weights)
 
 #no extension 
-def eval_on_dataset(model, dataset, output_filename, tile_batch_size, tile_size, tile_step, model_device, merger_device, class_weights = []):
+def eval_on_dataset(model, dataset, output_filename, tile_batch_size, tile_size, 
+        tile_step, model_device, merger_device, class_weights = [], 
+        apply_filter = False, filter_rad = None, filter_area = None):
     scores = []
     for i in tqdm(range(len(dataset)), "Images in dataset: "):
         img, lbl = dataset[i]
         prediction = tiled_eval(model, img, tile_batch_size, tile_size, tile_step, model_device, merger_device)
         pred_mask = logits_to_masks(prediction)
         label_mask = classes_to_masks(lbl)
-        score = F1_score(pred_mask, label_mask, class_weights)
-        print(f"Score: {i}", score)
+        if apply_filter:
+            pred_mask_filtered = filters1.remove_small_holes(pred_mask, 
+            filter_rad, filter_area)
+        else:
+            pred_mask_filtered = pred_mask
+        score = F1_score(pred_mask_filtered, label_mask, class_weights)
+        print(f"Score {i}:", score)
         scores.append(score)
         if output_filename:
             #compute overlay
@@ -142,6 +150,12 @@ def eval_on_dataset(model, dataset, output_filename, tile_batch_size, tile_size,
             torchvision.io.write_png(overlayed_pred, f"{output_filename}_{i}_3_overlay.png")
             torchvision.io.write_png(((label_mask > 0) * 127).to(torch.uint8), f"{output_filename}_{i}_4_mask_GT.png")
             torchvision.io.write_png(overlayed_label, f"{output_filename}_{i}_5_mask_GT_overlay.png")
+            if apply_filter:
+                overlayed_filtered_label = apply_mask(img, pred_mask_filtered, DEFAULT_OVERLAY_COLORS, alpha = 0.4)
+                torchvision.io.write_png(((pred_mask_filtered > 0) * 127).to(torch.uint8), f"{output_filename}_{i}_6_filtered_mask.png")
+                torchvision.io.write_png(overlayed_filtered_label, f"{output_filename}_{i}_7_filtered_overlay.png")
+
+
 
     score = np.mean(np.array(scores))
     return score
