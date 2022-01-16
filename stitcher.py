@@ -2,15 +2,7 @@ from enum import IntEnum
 from typing import Iterable
 import cv2
 import numpy as np
-
-try:
-    cfg = get_ipython().config 
-    if cfg['IPKernelApp']['parent_appname'] == 'ipython-notebook':
-        from tqdm.notebook import tqdm
-    else:
-        from tqdm import tqdm
-except NameError:
-    from tqdm import tqdm
+from tqdm.notebook import tqdm
 
 class GainCorrection(IntEnum):
     NONE = 0
@@ -77,11 +69,10 @@ class Stitcher:
 
     #inplace gain correction
     def _apply_gain(self, img, gain):
-
-        #TODO: experimental
-        #gain = np.mean(gain) * np.ones_like(gain)
-
         gain = gain.reshape(1,1,-1)
+        #TODO: experimental
+        gain = np.mean(gain) * np.ones_like(gain)
+
         img[:,:,:3] = (np.minimum(img[:,:,:3].astype(np.float32) * gain, 
                 255 * np.ones_like(img[:,:,:3]))).astype(np.uint8)
 
@@ -93,7 +84,7 @@ class Stitcher:
         The new mask is stored to the alpha-channel of the result.
         Provides gain correction if requested
     '''
-    def binAlphaBlend(self, img_orig, img_new, shift, gain_correction : bool):
+    def binAlphaBlend(self, img_orig, img_new, shift, gain_correction : bool, compute_mse : bool):
 
         bb_orig, bb_new = self.getROIboxes(img_orig.shape[:2], img_new.shape[:2], shift)
         orig_left, orig_right, orig_top, orig_bottom = bb_orig
@@ -119,6 +110,7 @@ class Stitcher:
         #mask of the intersection
         intersection_mask = (mask_orig * mask_new).astype(np.uint8)
         intersection_area = np.sum(intersection_mask)
+        if intersection_area == 0: intersection_area = 1
 
         #mask that has 2 on the intersection of the original images
         #and 1 elsewhere
@@ -151,7 +143,9 @@ class Stitcher:
         alpha1 = np.divide(mask_orig, denom_mask)
         alpha2 = 1.0 - alpha1
 
-        
+        sq_sum = 0
+        if compute_mse:
+            sq_sum = np.sum(np.power((ROI_orig - ROI_new) * intersection_mask, 2))
 
         dst = ROI_orig * alpha1 + ROI_new * alpha2
 
@@ -161,11 +155,14 @@ class Stitcher:
 
         img_orig[slice_orig] = dst
 
-        return img_orig
+        return (img_orig if not compute_mse else img_orig, sq_sum, intersection_area)
+            
+
+
 
     '''
         Stitches the provided images.
-        target_size         - size of a target image 
+        target_offsets      - offsets (top, bottom, left, right) to add to the first image
         num_images          - number of images to stitch. If 'images'
                                 provides a len method, num_images can be set to None.
                                 Alternatively, num_images may be used to limit
@@ -176,9 +173,10 @@ class Stitcher:
         gain_correction     - detects a required gain correction
                                 by averaging the pre-channel ratio on the intersection
     '''
-    def stitch(self, images : Iterable[np.ndarray], target_size, num_images = None, 
+    def stitch(self, images : Iterable[np.ndarray], target_offsets, num_images = None, 
             write_intermediate = False, output_filename = "stitcher_output",
-            gain_correction = True) -> np.ndarray:
+            gain_correction : GainCorrection = GainCorrection.LOCAL_AND_GLOBAL,
+            compute_mse = False) -> np.ndarray:
         if num_images is None: num_images = len(images)
         if num_images == 0: return None
         if num_images == 1: return next(iter(images))
@@ -186,7 +184,7 @@ class Stitcher:
         self._gain_vals = np.zeros(3, dtype=np.float32).reshape(1,1,-1)
         self._gain_measurements = 0
 
-        target_width, target_height = target_size
+        # target_width, target_height = target_size
 
         #homography accumalator: used to position a new patch wrt to the first image
         H_acc = np.eye(3) 
@@ -195,13 +193,32 @@ class Stitcher:
         keypoints_acc = None 
         descriptors_acc = None
 
+        mse = 0
+        area = 0
+
         for i, img in tqdm(enumerate(images), "Stitching", total = num_images):
             if i >= num_images: break
             if target is None:
                 #first image
-                target = cv2.copyMakeBorder(img, 0, target_height - img.shape[1], 
-                    0, target_width - img.shape[0], cv2.BORDER_CONSTANT, 
-                    value = [0,0,0,0])
+                
+                # time to get some sketchy sh*t, doo-daa, doo-daa
+                # hope, i'll get away with it, doo-da-doo-da-da
+                top, bottom, left, right = target_offsets
+                # top = (target_height - img.shape[1]) // 2
+                # bottom = target_height - img.shape[1] - top
+                # left = (target_width - img.shape[0]) // 2
+                # right = target_width - img.shape[0] - left
+
+                target = cv2.copyMakeBorder(img, top, bottom, left, right,
+                    cv2.BORDER_CONSTANT, value = [0,0,0,0])
+
+                H_acc = np.array([[1, 0, left], [0, 1, top], [0, 0, 1]])
+
+                # target = cv2.copyMakeBorder(img, 0, target_height - img.shape[1], 
+                #     0, target_width - img.shape[0], cv2.BORDER_CONSTANT, 
+                #     value = [0,0,0,0])
+
+
                 keypoints_acc, descriptors_acc = self.detector.detectAndCompute(img, None)
 
             else:
@@ -230,18 +247,9 @@ class Stitcher:
 
                 #new shift 
                 desired_shift = np.multiply(img.shape[:2], scale).astype(np.int32)
-                # print(f"Desired shift: {desired_shift}")
                 new_shift = desired_shift - shift
-
-                # print(f"New shift: {new_shift}")
-
                 new_shift_mat = np.array([[1, 0, new_shift[0]], [0, 1, new_shift[1]], [0, 0, 1]])
-                # print(new_shift_mat)
                 new_homography = np.matmul(new_shift_mat, H_acc)
-                # print("Old homography:")
-                # print(H_acc)
-                # print("new homography:")
-                # print(new_homography)
 
                 #sanity check:
                 # center_image_sanity = np.matmul(new_homography, center)
@@ -254,7 +262,12 @@ class Stitcher:
 
                 warped_image = cv2.warpPerspective(img, new_homography, ROI_size, borderValue=[0,0,0,0])
 
-                target = self.binAlphaBlend(target, warped_image, shift-desired_shift, gain_correction > 0)
+                result = self.binAlphaBlend(target, warped_image, shift-desired_shift, 
+                    gain_correction > 0, compute_mse)
+                if compute_mse:
+                    result, mse_val, mse_area = result
+                    mse += mse_val
+                    area += mse_area
 
                 keypoints_acc, descriptors_acc = keypoints_new, descriptors_new
 
@@ -268,6 +281,10 @@ class Stitcher:
             self._apply_gain(target, np.ones_like(self._gain_measurements) / self._gain_vals)
 
         if output_filename:
-            print(f'{output_filename}.png')
+            # print(f'{output_filename}.png')
             cv2.imwrite(f'{output_filename}.png', target)
-        return target
+
+        if compute_mse:
+            return target, (mse/area).item()
+        else:
+            return target
