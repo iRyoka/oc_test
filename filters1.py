@@ -27,4 +27,3 @@ def remove_small_holes(img_mask : torch.Tensor, closing_rad : int, holes_thresho
 
 
 
-    forests = skimage.morphology.binary_closing(forests, skimage.morphology.disk(closing_rad))
