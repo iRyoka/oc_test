@@ -11,6 +11,8 @@ class LungsDataset:
 
     TRANSFORMS_VAL = ["tofloat", "resize", "fixlabels"]
 
+    TRANSFORMS_NUMPY = ["fixlabels", "numpy"]
+
     def __init__(self, data_dir, img_csv_name, output_size = (128, 128)) -> None:
         with open(os.path.join(data_dir, img_csv_name), "r") as f:
             self.img_csv_data = pd.read_csv(f, delimiter=",")
@@ -25,8 +27,10 @@ class LungsDataset:
 
     def eval(self): self.transforms = LungsDataset.TRANSFORMS_VAL
 
+    def numpy(self): self.transforms = LungsDataset.TRANSFORMS_NUMPY
+
     def transform(self, img, lbl):
-        print("Lbl shape 1: ", lbl.shape)
+        # print("Lbl shape 1: ", lbl.shape)
         for transform in self.transforms:
             if (transform == "randomresizedcrop"):
                 #TODO: magic constants! 
@@ -48,6 +52,9 @@ class LungsDataset:
             elif (transform == "fixlabels"): 
                 #print("Lbl shape 2: ", lbl.shape)
                 lbl = lbl.div(255).squeeze()
+            elif (transform == "numpy"):
+                img = img.numpy()
+                lbl = lbl.numpy()
             else:
                 print(f"Warning: unknown transorm ignored: {transform}")
 
