@@ -1,3 +1,4 @@
+from doctest import NORMALIZE_WHITESPACE
 import os
 from typing import Tuple
 import numpy as np
@@ -11,13 +12,18 @@ from tqdm import tqdm as tqdm
 import matplotlib.pyplot as plt
 import math
 from tqdm.notebook import tqdm as tqdm
+import kornia, kornia.color
 
 DEFAULT_OVERLAY_COLORS = ["gray", "green","orange"]
 
 class Dataset(torch.utils.data.Dataset):
 
-    TRAIN_TRANSFORMS = ["randomresizedcrop", "randomflip", "tofloat", "fixlabels"]
-    VAL_TRANSFORMS = ["tofloat", "fixlabels"]
+    TRAIN_TRANSFORMS = ["randomresizedcrop", "jitter", 
+	    "tofloat", "normalize", "randomflip", 
+        "fixlabels"]
+    VAL_TRANSFORMS = ["tofloat", "fixlabels", "resize_src_to_labels", "normalize"]
+
+    VAL_TRANSFORMS_NO_NORM = ["tofloat", "fixlabels", "resize_src_to_labels"]
 
     """
         transforms may contain the following ones:
@@ -30,8 +36,9 @@ class Dataset(torch.utils.data.Dataset):
         super().__init__()
 
         self.transforms = Dataset.TRAIN_TRANSFORMS
-        self.ouput_size = output_size
+        self.output_size = output_size
         #self.use_transforms = True
+        self.jitter = torchvision.transforms.ColorJitter(0.4, 0.4, 0.4, 0.4)
 
         train_datafile = pd.read_csv(os.path.join(data_dir, data_csv), delimiter=",")
 
@@ -50,6 +57,9 @@ class Dataset(torch.utils.data.Dataset):
     
     def eval(self):
         self.transforms = Dataset.VAL_TRANSFORMS
+    
+    def eval_no_norm(self):
+        self.transforms = Dataset.VAL_TRANSFORMS_NO_NORM
 
     def __len__(self):
         return len(self.train_images)
@@ -60,14 +70,18 @@ class Dataset(torch.utils.data.Dataset):
         for transform in self.transforms:
             if (transform == "randomresizedcrop"):
                 #TODO: magic constants! 
-                scale=(0.08, 1.0)
+                scale=(0.08, 1.3)
                 ratio=(3. / 4., 4. / 3.)
 
                 i, j, h, w = torchvision.transforms.RandomResizedCrop.get_params(img, scale, ratio)
 
-                img = VISIONF.resized_crop(img, i, j, h, w, self.ouput_size)
-                label = VISIONF.resized_crop(label, i, j, h, w, self.ouput_size, 
+                img = VISIONF.resized_crop(img, i, j, h, w, self.output_size)
+                label = VISIONF.resized_crop(label, i, j, h, w, self.output_size, 
                     interpolation=VISIONF.InterpolationMode.NEAREST)
+            #hotfix for problems with validation dataset
+            elif (transform == "resize_src_to_labels"):
+                if img.shape[1:] != label.shape[1:]:
+                    img = VISIONF.resize(img, label.shape)
             elif (transform == "tofloat"):
                 img = torchvision.transforms.ConvertImageDtype(torch.float)(img)
             elif (transform == "fixlabels"): 
@@ -80,9 +94,17 @@ class Dataset(torch.utils.data.Dataset):
                     img = VISIONF.hflip(img)   
                     label = VISIONF.hflip(label)               
             elif (transform == "jitter"):
-                img = torchvision.transforms.ColorJitter(0.2, 0.2, 0.2, 0.1)(img)
+                img = self.jitter(img)
+            elif (transform == "normalize"):
+                mean_rgb=(0.4914, 0.4822, 0.4465)
+                std_rgb=(0.2023, 0.1994, 0.2010)
+                img = VISIONF.normalize(kornia.color.hsv_to_rgb(img), mean_rgb, std_rgb)
+            elif (transform == "normalize_rgb"):
+                mean_rgb=(0.4914, 0.4822, 0.4465)
+                std_rgb=(0.2023, 0.1994, 0.2010)
+                img = VISIONF.normalize(img, mean_rgb, std_rgb)
             else:
-                print(f"Warning: unknown transorm ignored: {transform}")
+                print(f"Warning: unknown transform ignored: {transform}")
 
         return img, label
 

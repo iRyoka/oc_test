@@ -1,4 +1,3 @@
-from unittest.result import failfast
 import skimage, skimage.measure, skimage.morphology
 import skimage.feature, skimage.segmentation
 import sklearn, sklearn.metrics 

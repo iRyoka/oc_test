@@ -1,7 +1,3 @@
-#https://discuss.pytorch.org/t/is-this-a-correct-implementation-for-focal-loss-in-pytorch/43327/8
-# 
-# 
-from cProfile import label
 from pickletools import uint8
 from typing import Tuple
 import torch
@@ -129,7 +125,10 @@ def eval_on_dataset(model, dataset, output_filename, tile_batch_size, tile_size,
         apply_filter = False, filter_rad = None, filter_area = None):
     scores = []
     for i in tqdm(range(len(dataset)), "Images in dataset: "):
+        dataset.eval()
         img, lbl = dataset[i]
+        dataset.eval_no_norm()
+        img_orig, _ = dataset[i]
         prediction = tiled_eval(model, img, tile_batch_size, tile_size, tile_step, model_device, merger_device)
         pred_mask = logits_to_masks(prediction)
         label_mask = classes_to_masks(lbl)
@@ -143,15 +142,15 @@ def eval_on_dataset(model, dataset, output_filename, tile_batch_size, tile_size,
         scores.append(score)
         if output_filename:
             #compute overlay
-            overlayed_pred = apply_mask(img, pred_mask, DEFAULT_OVERLAY_COLORS, alpha = 0.4)
-            overlayed_label = apply_mask(img, label_mask, DEFAULT_OVERLAY_COLORS, alpha = 0.4)
-            torchvision.io.write_png((img * 255).to(torch.uint8), f"{output_filename}_{i}_1_orig.png")
+            overlayed_pred = apply_mask(img_orig, pred_mask, DEFAULT_OVERLAY_COLORS, alpha = 0.4)
+            overlayed_label = apply_mask(img_orig, label_mask, DEFAULT_OVERLAY_COLORS, alpha = 0.4)
+            torchvision.io.write_png((img_orig * 255).to(torch.uint8), f"{output_filename}_{i}_1_orig.png")
             torchvision.io.write_png(((pred_mask > 0) * 127).to(torch.uint8), f"{output_filename}_{i}_2_mask.png")
             torchvision.io.write_png(overlayed_pred, f"{output_filename}_{i}_3_overlay.png")
             torchvision.io.write_png(((label_mask > 0) * 127).to(torch.uint8), f"{output_filename}_{i}_4_mask_GT.png")
             torchvision.io.write_png(overlayed_label, f"{output_filename}_{i}_5_mask_GT_overlay.png")
             if apply_filter:
-                overlayed_filtered_label = apply_mask(img, pred_mask_filtered, DEFAULT_OVERLAY_COLORS, alpha = 0.4)
+                overlayed_filtered_label = apply_mask(img_orig, pred_mask_filtered, DEFAULT_OVERLAY_COLORS, alpha = 0.4)
                 torchvision.io.write_png(((pred_mask_filtered > 0) * 127).to(torch.uint8), f"{output_filename}_{i}_6_filtered_mask.png")
                 torchvision.io.write_png(overlayed_filtered_label, f"{output_filename}_{i}_7_filtered_overlay.png")
 
